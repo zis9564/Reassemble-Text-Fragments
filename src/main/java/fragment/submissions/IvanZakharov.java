@@ -1,9 +1,7 @@
 package fragment.submissions;
 
 import java.util.*;
-import java.util.regex.Pattern;
 import java.util.function.Function;
-import java.util.regex.MatchResult;
 import java.util.stream.Collectors;
 import java.io.FileReader;
 import java.io.IOException;
@@ -24,174 +22,193 @@ public class IvanZakharov {
 
     static class Assembler {
 
-        private Fragment FULL;
-        private Fragment LEFT;
-        private Fragment RIGHT;
-        private StringBuilder text;
+        private Fragment mergeCandidate;
 
         public String assemble(String line) {
-            LinkedList<Fragment> fragments = Arrays.stream(line.split(";"))
+            LinkedList<String> fragments = Arrays.stream(line.split(";"))
                     .sorted(Comparator.comparingInt(String::length).reversed())
-                    .map(Fragment::new)
                     .collect(Collectors.toCollection(LinkedList::new));
 
-            if (fragments.isEmpty()) {
-                return "";
+            while (fragments.size() > 1) {
+                List<Fragment> collection = new ArrayList<>(fragments.stream().map(Fragment::new).toList());
+                fragments.forEach(f -> {
+                    TreeSet<Overlap> overlaps = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+                    collection.remove(new Fragment(f)); // remove element (f) from the collection to avoid self comparison
+                    overlaps.add(calculateOverlap(collection, f));
+                    mergeCandidate = (safeO.apply(overlaps).getIndex() > safeF.apply(mergeCandidate).getOverlapIndex())
+                            ? new Fragment(f, overlaps.last())
+                            : mergeCandidate;
+                });
+                fragments.remove(safeF.apply(mergeCandidate).payload);
+                fragments.remove(safeF.apply(mergeCandidate).getOverlap());
+                fragments.addFirst(safeF.apply(mergeCandidate).merge());
+                mergeCandidate = null;
             }
-            text = new StringBuilder(fragments.pollFirst().payload);
-
-            while (!fragments.isEmpty()) {
-                if (FULL == null) {
-                    FULL = OverlapCalculator.of(FULL, LEFT, RIGHT)
-                            .calculateFullOverlap(fragments, text.toString());
-                }
-                if (LEFT == null) {
-                    LEFT = OverlapCalculator.of(FULL, LEFT, RIGHT)
-                            .calculateLeftOverlap(fragments, text.toString());
-                }
-                if (RIGHT == null) {
-                    RIGHT = OverlapCalculator.of(FULL, LEFT, RIGHT)
-                            .calculateRightOverlap(fragments, text.toString());
-                }
-                fragments.remove(merge(FULL, LEFT, RIGHT));
-            }
-            return text.toString();
+            return fragments.getFirst();
         }
 
-        private Fragment merge(Fragment full, Fragment left, Fragment right) {
-            if (safe.apply(full).fullOverlap >= Math.max(safe.apply(left).leftOverlap, safe.apply(right).rightOverlap)) {
-                return mergeFull(full);
+        private Overlap calculateOverlap(List<Fragment> collection, String fragment) {
+            if (collection.isEmpty()) {
+                return new Overlap();
             }
-            if (safe.apply(left).leftOverlap > safe.apply(right).rightOverlap) {
-                return mergeLeft(left);
-            }
-            else {
-                return mergeRight(right);
-            }
-        }
-
-        private Fragment mergeFull(Fragment full) {
-            // no need to merge
-            FULL = null;
-            return full;
-        }
-
-        private Fragment mergeLeft(Fragment left) {
-            text.insert(0, left.payload.substring(0, left.length - left.leftOverlap));
-            LEFT = null;
-            return left;
-        }
-
-        private Fragment mergeRight(Fragment right) {
-            text.append(right.payload.substring(right.rightOverlap + 1));
-            RIGHT = null;
-            return right;
+            TreeSet<Overlap> intersections = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+            intersections.add(new OverlapCalculator().calculateFullOverlap(collection, fragment));
+            intersections.add(new OverlapCalculator().calculateLeftOverlap(collection, fragment));
+            intersections.add(new OverlapCalculator().calculateRightOverlap(collection, fragment));
+            return intersections.last();
         }
     }
 
-    //----------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
+
     static class OverlapCalculator {
 
-        private Fragment FULL;
-        private Fragment LEFT;
-        private Fragment RIGHT;
+        public OverlapCalculator () {}
 
-        public static OverlapCalculator of(Fragment full, Fragment left, Fragment right) {
-            return new OverlapCalculator(full, left, right);
-        }
-
-        public Fragment calculateFullOverlap(List<Fragment> fragmentList, String text) {
+        /**
+         * Returns biggest FULL overlap from collection "fragmentList" relative to argument 'text'
+         * @param fragmentList list of fragments where from the biggest intersection should be found
+         * @param text word for comparisons
+         * @return Overlap object containing information about intersection
+         */
+        public Overlap calculateFullOverlap(List<Fragment> fragmentList, String text) {
+            TreeSet<Overlap> overlaps = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
             fragmentList.forEach(fragment -> {
-                if (checkFullOverlap(text, fragment.payload)) {
-                    fragment.fullOverlap = fragment.length;
-                    setBigger(fragment, FULL);
-                }
-            });
-            return FULL;
-        }
-
-        public Fragment calculateLeftOverlap(List<Fragment> fragmentList, String text) {
-            fragmentList.forEach(fragment -> {
-                if (safe.apply(LEFT).leftOverlap > fragment.length) {
-                    // reducing useless calculations because our collection is sorted.
+                if (!text.contains(fragment.payload)) {
                     return;
                 }
-                fragment.leftOverlap = checkLeftOverlap(text, fragment.payload);
-                setBigger(fragment, LEFT);
+                overlaps.add(new Overlap(fragment.payload.length(), Side.FULL, fragment.payload));
             });
-            return LEFT;
+            return safeO.apply(overlaps);
         }
 
-        public Fragment calculateRightOverlap(List<Fragment> fragmentList, String text) {
+        /**
+         * Returns biggest LEFT overlap from collection "fragmentList" relative to argument 'text'
+         * @param fragmentList list of fragments where from the biggest intersection should be found
+         * @param text word for comparisons
+         * @return Overlap object containing information about intersection
+         */
+        public Overlap calculateLeftOverlap(List<Fragment> fragmentList, String text) {
+            TreeSet<Overlap> overlaps = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
             fragmentList.forEach(fragment -> {
-                if (safe.apply(RIGHT).rightOverlap > fragment.length) {
-                    // reducing useless calculations because our collection is sorted.
+                if (text.contains(fragment.payload)) {
                     return;
                 }
-                fragment.rightOverlap = checkRightOverlap(text, fragment.payload);
-                setBigger(fragment, RIGHT);
+                overlaps.add(new Overlap(checkLeftOverlap(text, fragment.payload), Side.LEFT, fragment.payload));
             });
-            return RIGHT;
+            return safeO.apply(overlaps);
         }
 
-        private boolean checkFullOverlap(String text, String fragment) {
-            return text.contains(fragment);
+        /**
+         * Returns biggest RIGHT overlap from collection "fragmentList" relative to argument 'text'
+         * @param fragmentList list of fragments where from the biggest intersection should be found
+         * @param text word for comparisons
+         * @return Overlap object containing information about intersection
+         */
+        public Overlap calculateRightOverlap(List<Fragment> fragmentList, String text) {
+            TreeSet<Overlap> overlaps = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+            fragmentList.forEach(fragment -> {
+                if (text.contains(fragment.payload)) {
+                    return;
+                }
+                overlaps.add(new Overlap(checkRightOverlap(text, fragment.payload), Side.RIGHT, fragment.payload));
+            });
+            return safeO.apply(overlaps);
         }
 
-        private int checkLeftOverlap(String text, String fragment) {
-            String firstSymbol = String.valueOf(text.charAt(0));
-            // find all 'anchors' by lastSymbol in text and then compare substrings until we get first match
-            return Pattern.compile(Pattern.quote(firstSymbol))
-                    .matcher(fragment)
-                    .results()
-                    .map(MatchResult::start)
-                    .filter(i -> fragment.substring(i).equals(text.substring(0, (fragment.length() - i))))
-                    .map(i -> fragment.length() - i) // calculate overlap
-                    .findFirst()
-                    .orElse(0);
+        /**
+         * Compares word "text" with element of collection "fragment" and find the longest LEFT intersection of two words
+         * @param text word for comparisons
+         * @param fragment element of collection
+         * @return overlap index
+         */
+        private static int checkLeftOverlap(String text, String fragment) {
+            int overlapIndex = text.length() - 1;
+            while (!fragment.regionMatches(false, fragment.length() - overlapIndex, text, 0, overlapIndex)) {
+                overlapIndex--;
+            }
+            return overlapIndex;
         }
 
-        private int checkRightOverlap(String result, String token) {
-            String lastSymbol = String.valueOf(result.charAt(result.length()-1));
-            // we find all 'anchors' by lastSymbol in result and then compare substrings until we get first match
-            return Pattern.compile(Pattern.quote(lastSymbol))
-                    .matcher(token)
-                    .results()
-                    .map(MatchResult::start)
-                    .sorted(Collections.reverseOrder())
-                    .filter(i -> token.substring(0, (i + 1)).equals(result.substring(result.length() - token.substring(0, (i + 1)).length())))
-                    .findFirst()
-                    .orElse(0);
-        }
-
-        private void setBigger(Fragment candidate, Fragment ongoing) {
-            FULL = (candidate.fullOverlap > safe.apply(ongoing).fullOverlap) ? candidate : ongoing;
-            LEFT = (candidate.leftOverlap > safe.apply(ongoing).leftOverlap) ? candidate : ongoing;
-            RIGHT = (candidate.rightOverlap > safe.apply(ongoing).rightOverlap) ? candidate : ongoing;
-        }
-
-        private OverlapCalculator(Fragment full, Fragment left, Fragment right) {
-            this.FULL = full;
-            this.LEFT = left;
-            this.RIGHT = right;
+        /**
+         * Compares word "text" with element of collection "fragment" and find the longest RIGHT intersection of two words
+         * @param text word for comparisons
+         * @param fragment element of collection
+         * @return overlap index
+         */
+        private static int checkRightOverlap(String text, String fragment) {
+            int overlapIndex = fragment.length() - 1;
+            while (!text.regionMatches(false, text.length() - overlapIndex, fragment, 0, overlapIndex)) {
+                overlapIndex--;
+            }
+            return overlapIndex;
         }
     }
 
-//----------------------------------------------------------------------------------------------------------------------
+    //------------------------------------------------------------------------------------------------------------------
 
     static class Fragment {
 
-        int length;
-        int leftOverlap;
-        int rightOverlap;
-        int fullOverlap;
-        String payload;
+        final String payload;
+        private StringBuilder stringBuilder;
+        private final TreeSet<Overlap> intersections;
 
-        public Fragment() {}
+        public Fragment() {
+            this.payload = "";
+            this.intersections = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+        }
+
+        public Fragment(String payload, Overlap overlap) {
+            this.intersections = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+            this.stringBuilder = new StringBuilder(payload);
+            intersections.add(overlap);
+            this.payload = payload;
+        }
 
         public Fragment(String payload) {
+            this.intersections = new TreeSet<>(Comparator.comparingInt(Overlap::getIndex));
+            this.stringBuilder = new StringBuilder(payload);
             this.payload = payload;
-            this.length = payload.length();
+        }
+
+        public int getOverlapIndex() {
+            if (!this.intersections.isEmpty()) {
+                return this.intersections.last().index;
+            }
+            return -1;
+        }
+
+        public String getOverlap() {
+            if (!this.intersections.isEmpty()) {
+                return this.intersections.last().payload;
+            }
+            return "";
+        }
+
+        public String merge() {
+            if (!this.intersections.isEmpty()) {
+                Overlap mergeCandidate = this.intersections.last();
+                switch (mergeCandidate.side) {
+                    case FULL -> {
+                        return this.payload;
+                    }
+                    case LEFT -> {
+                        return mergeLeft(mergeCandidate);
+                    }
+                    case RIGHT -> {
+                        return mergeRight(mergeCandidate);
+                    }
+                }
+            }
+            return this.payload;
+        }
+
+        private String mergeLeft(Overlap overlap) {
+            return stringBuilder.insert(0, overlap.payload.substring(0, overlap.payload.length() - overlap.index)).toString();
+        }
+
+        private String mergeRight(Overlap overlap) {
+            return stringBuilder.append(overlap.payload.substring(overlap.index)).toString();
         }
 
         @Override
@@ -207,8 +224,38 @@ public class IvanZakharov {
             return Objects.hash(payload);
         }
     }
-//----------------------------------------------------------------------------------------------------------------------
+
+    static class Overlap {
+
+        final int index;
+        final Side side;
+        final String payload;
+
+        public Overlap() {
+            this.index = -1;
+            side = null;
+            payload = "";
+        }
+
+        public Overlap(int index, Side side, String payload) {
+            this.index = index;
+            this.side = side;
+            this.payload = payload;
+        }
+
+        public int getIndex() {
+            return this.index;
+        }
+    }
+
+    enum Side { LEFT, RIGHT, FULL }
+
+    //------------------------------------------------------------------------------------------------------------------
 
     // simple NPE protection to reduce code complexity
-    static Function<Fragment, Fragment> safe = (f) -> (f == null) ? new Fragment() : f;
+    static Function<Fragment, Fragment> safeF = (f) -> (f == null) ? new Fragment() : f;
+
+    // simple NPE protection to reduce code complexity
+    static Function<TreeSet<Overlap>, Overlap> safeO = (f) -> (f == null || f.isEmpty()) ? new Overlap() : f.last();
+
 }
