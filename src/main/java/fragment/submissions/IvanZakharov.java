@@ -33,30 +33,30 @@ public class IvanZakharov {
 
         public String assemble(final LinkedList<String> fragments) {
             while (fragments.size() > 1) {
-                TreeSet<Fragment> intersections = new TreeSet<>(Comparator.comparingInt(Fragment::getOverlapIndex));
+                TreeSet<Fragment> overlaps = new TreeSet<>(Comparator.comparingInt(Fragment::getOverlapIndex));
                 ArrayList<Fragment> collection = fragments.stream().map(Fragment::new).collect(Collectors.toCollection(ArrayList::new));
 
-                fragments.forEach(f -> {
-                        collection.remove(new Fragment(f)); // avoid self comparison
-                        calculateOverlap(collection, intersections, f);
+                fragments.forEach(anchor -> {
+                        collection.remove(new Fragment(anchor)); // avoid self comparison
+                        calculateOverlap(collection, overlaps, anchor);
                 });
-                Optional.ofNullable(intersections.last())
+                Optional.ofNullable(overlaps.last())
                         .ifPresent(candidate -> {
                             fragments.remove(safeF.apply(candidate).payload);
                             fragments.remove(safeF.apply(candidate).getOverlap());
                             fragments.addFirst(candidate.merge());
                 });
             }
-            return fragments.getFirst();
+            return fragments.pollFirst();
         }
 
-        private void calculateOverlap(List<Fragment> collection, TreeSet<Fragment> intersections, String fragment) {
+        private void calculateOverlap(List<Fragment> collection, TreeSet<Fragment> overlaps, String anchor) {
             if (collection.isEmpty()) {
                 return;
             }
-            new OverlapCalculator().calcFull(collection, intersections, fragment);
-            new OverlapCalculator().calcLeft(collection, intersections, fragment);
-            new OverlapCalculator().calcRight(collection, intersections, fragment);
+            new OverlapCalculator(collection, overlaps).calcFull(anchor);
+            new OverlapCalculator(collection, overlaps).calcLeft(anchor);
+            new OverlapCalculator(collection, overlaps).calcRight(anchor);
         }
     }
 
@@ -64,47 +64,50 @@ public class IvanZakharov {
 
     static class OverlapCalculator {
 
-        public OverlapCalculator () {}
+        private final List<Fragment> fragments;
+        private final TreeSet<Fragment> overlaps;
+
+        public OverlapCalculator (List<Fragment> fragments, TreeSet<Fragment> overlaps) {
+            this.fragments = fragments;
+            this.overlaps = overlaps;
+        }
 
         /**
          * Returns biggest FULL overlap from collection "fragments" relative to argument 'anchor'
-         * @param fragments list of fragments where from the biggest intersection should be found
          * @param anchor word for comparisons
          */
-        public void calcFull(List<Fragment> fragments, TreeSet<Fragment> intersections, String anchor) {
+        public void calcFull(String anchor) {
             fragments.forEach(fragment -> {
                 if (!anchor.contains(fragment.payload)) {
                     return;
                 }
-                intersections.add(new Fragment(anchor, new Overlap(fragment.payload.length(), Side.FULL, fragment.payload)));
+                overlaps.add(new Fragment(anchor, new Overlap(fragment.payload.length(), Side.FULL, fragment.payload)));
             });
         }
 
         /**
          * Returns biggest LEFT overlap from collection "fragments" relative to argument 'anchor'
-         * @param fragments list of fragments where from the biggest intersection should be found
          * @param anchor word for comparisons
          */
-        public void calcLeft(List<Fragment> fragments, TreeSet<Fragment> intersections, String anchor) {
+        public void calcLeft(String anchor) {
             fragments.forEach(fragment -> {
                 if (anchor.contains(fragment.payload)) {
                     return;
                 }
-                intersections.add(new Fragment(anchor, new Overlap(checkLeft(anchor, fragment.payload), Side.LEFT, fragment.payload)));
+                overlaps.add(new Fragment(anchor, new Overlap(checkLeft(anchor, fragment.payload), Side.LEFT, fragment.payload)));
             });
         }
 
         /**
          * Returns biggest RIGHT overlap from collection "fragments" relative to argument 'anchor'
-         * @param fragments list of fragments where from the biggest intersection should be found
          * @param anchor word for comparisons
          */
-        public void calcRight(List<Fragment> fragments, TreeSet<Fragment> intersections, String anchor) {
+        public void calcRight(String anchor) {
             fragments.forEach(fragment -> {
                 if (anchor.contains(fragment.payload)) {
                     return;
                 }
-                intersections.add(new Fragment(anchor, new Overlap(checkRight(anchor, fragment.payload), Side.RIGHT, fragment.payload)));
+                overlaps.add(new Fragment(anchor, new Overlap(checkRight(anchor, fragment.payload), Side.RIGHT, fragment.payload)));
             });
         }
 
@@ -231,11 +234,12 @@ public class IvanZakharov {
         }
     }
 
+    //------------------------------------------------------------------------------------------------------------------
+
     enum Side { LEFT, RIGHT, FULL }
 
     //------------------------------------------------------------------------------------------------------------------
 
     // simple NPE protection
     static Function<Fragment, Fragment> safeF = (f) -> (f == null) ? new Fragment() : f;
-
 }
