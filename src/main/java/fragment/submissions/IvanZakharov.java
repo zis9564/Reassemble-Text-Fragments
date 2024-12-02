@@ -7,13 +7,6 @@ import java.io.BufferedReader;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/*
-This is third version of an algorithm.
-
-The first version was implementation of direct approach.
-The second version fixed an issue where merge-candidate was considering as biggest relative to the ‘anchor’ element without global comparison.
-The third version made code simpler, more reliable and easy to read.
-*/
 public class IvanZakharov {
 
     private static final Assembler assembler = new Assembler();
@@ -181,14 +174,11 @@ public class IvanZakharov {
         public String merge() {
             if (!this.intersections.isEmpty()) {
                 Overlap candidate = this.intersections.last();
-                switch (candidate.side) {
-                    case FULL:
-                        return this.payload;
-                    case LEFT:
-                        return mergeLeft(candidate);
-                    case RIGHT:
-                        return mergeRight(candidate);
-                }
+                return switch (candidate.side) {
+                    case FULL -> this.payload;
+                    case LEFT -> mergeLeft(candidate);
+                    case RIGHT -> mergeRight(candidate);
+                };
             }
             return this.payload;
         }
